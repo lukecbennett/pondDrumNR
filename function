@@ -1,0 +1,36 @@
+// Track the maximum delta_t seen for each screen (0..6)
+// Input message shape expected:
+//   msg.payload.delta_t  -> number (seconds)
+//   msg.payload.screen   -> integer 0..6
+// Reset by sending: msg.reset = true
+const SCREENS = [0,1,2,3,4,5,6];   // x-axis screens
+if (msg.reset) {
+ context.set('maxByScreen', null);
+ return null;
+}
+// init storage
+let maxByScreen = context.get('maxByScreen');
+if (!maxByScreen) {
+ maxByScreen = Object.fromEntries(SCREENS.map(s => [s, 0]));
+}
+// read inputs
+const v = Number(msg.payload?.delta_t);
+const s = Number(msg.payload?.screen);
+if (!Number.isFinite(v) || !SCREENS.includes(s)) return null;
+// update max for that screen
+if (v > (maxByScreen[s] ?? 0)) {
+ maxByScreen[s] = v;
+ context.set('maxByScreen', maxByScreen);
+} else {
+ // still store so chart can be resent on every message if you like
+ context.set('maxByScreen', maxByScreen);
+}
+// build chart message (single series)
+const labels = SCREENS.map(n => `Screen ${n}`);
+const values = SCREENS.map(n => maxByScreen[n] ?? 0);
+// Send to ui_chart: x-axis = labels (screens), y = seconds (max delta_t)
+return {
+ topic: "Longest Δt",
+ labels: labels,
+ payload: values
+};
