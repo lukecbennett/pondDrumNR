@@ -1,21 +1,53 @@
-// Guard node before ui_chart
-// Only forward messages that look like proper chart data:
-//   msg.labels = array of strings (x-axis categories)
-//   msg.payload = array of numbers (y-axis values)
-if (!msg.labels || !Array.isArray(msg.labels)) {
-   node.warn("Dropped message: no labels array");
-   return null;
+/**
+* Max Δt per screen (0–6) chart builder + hard filter
+* Accepts:
+*   A) Raw object with delta_t & screen anywhere (msg.payload.delta_t etc.)
+*   B) Already-formed chart messages (labels[]=, payload[]=) — passes through
+* Drops everything else (e.g., strings like "Bad data inject").
+*/
+// --- config ---
+const SCREENS = [0,1,2,3,4,5,6];
+const SERIES_NAME = "Longest Δt"; // chart series
+// ---------------
+// RESET support
+if (msg.reset === true) {
+ context.set("maxByScreen", null);
+ return null;
 }
-if (!msg.payload || !Array.isArray(msg.payload)) {
-   node.warn("Dropped message: no payload array");
-   return null;
+// 1) If it's already a valid chart message, pass it (and ignore junk)
+if (Array.isArray(msg.labels) && Array.isArray(msg.payload) &&
+   msg.payload.every(n => Number.isFinite(n))) {
+ return msg; // valid chart data
 }
-// Check that every payload element is a number
-for (let i = 0; i < msg.payload.length; i++) {
-   if (typeof msg.payload[i] !== "number" || !isFinite(msg.payload[i])) {
-       node.warn("Dropped message: payload contains non-numeric value");
-       return null;
-   }
+// 2) Try to extract delta_t & screen from common shapes
+let v = undefined, s = undefined;
+// from payload object
+if (msg && typeof msg === "object" && msg.payload && typeof msg.payload === "object") {
+ if (Number.isFinite(msg.payload.delta_t)) v = Number(msg.payload.delta_t);
+ if (Number.isFinite(msg.payload.screen))  s = Number(msg.payload.screen);
 }
-// Passed all checks → send on to ui_chart
-return msg;
+// also allow top-level fields (if someone mapped them there)
+if (v === undefined && Number.isFinite(msg.delta_t)) v = Number(msg.delta_t);
+if (s === undefined && Number.isFinite(msg.screen))  s = Number(msg.screen);
+// If we still don't have numbers, DROP it (this kills "Bad data inject")
+if (!Number.isFinite(v) || !SCREENS.includes(s)) {
+ // optional breadcrumb:
+ // node.warn("Dropped non-data message");
+ return null;
+}
+// 3) Update maxima per screen
+let maxByScreen = context.get("maxByScreen") || Object.fromEntries(SCREENS.map(x=>[x,0]));
+if (v > (maxByScreen[s] ?? 0)) {
+ maxByScreen[s] = v;
+ context.set("maxByScreen", maxByScreen);
+} else {
+ context.set("maxByScreen", maxByScreen);
+}
+// 4) Build a single-series bar chart message
+const labels = SCREENS.map(n => `Screen ${n}`);
+const values = SCREENS.map(n => maxByScreen[n] ?? 0);
+return {
+ topic: SERIES_NAME,
+ labels: labels,     // x-axis labels (screens)
+ payload: values     // y-values (longest seconds)
+};
